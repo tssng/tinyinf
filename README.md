@@ -1,2 +1,2 @@
-# lazyarena
+# tinyinf
 just for fun :) 
