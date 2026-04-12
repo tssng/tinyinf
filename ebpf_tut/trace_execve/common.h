@@ -15,7 +15,7 @@ struct event {
     __u32 uid; // user id of process owner
     char comm[TASK_COMM_LEN]; // command/executable name
     char filename[MAX_FILENAME_LEN]; // filename of executed binary
-}
+};
 
 #endif
 

@@ -71,9 +71,67 @@ int main(int argc, char **argv)
     // set up the custom libbpf logging
     libbpf_set_print(libbpf_print_fn);
 
+
+    // open BPF skeleton, then parse ELF data
     skel = program_bpf__open();
     if(!skel) {
         fprintf(stderr, "Failed to open BPF skeleton\n");
         return 1;
     }
+
+
+    // load + verify BPF programs
+    // loads the bytecode into the kernel then runs verifier
+    err = program_bpf__load(skel);
+    if (err) {
+        fprintf(stderr, "Failed to load BPF skeleton %d\n", err);
+        goto cleanup;
+    }
+
+    // attaches BPF program to hooks
+    // so it attaches it to sys_enter_execve
+    // the skeleton knows where to attach based on SEC() 
+    err = program_bpf__attach(skel);
+    if (err) {
+        fprintf(stderr, "Failed to attach %d\n", err);
+        goto cleanup;
+    }
+
+    // set up signal handlers for easy shutdown
+    signal(SIGINT, sig_handler); // ctrl+C
+    signal(SIGTERM, sig_handler); // kill cmd
+
+    // create ring buffer consumer 
+    rb = ring_buffer__new(bpf_map__fd(skel->maps.events),
+                                handle_event,
+                                NULL,
+                                NULL);
+    
+    if (!rb) {
+        err = -1;
+        fprintf(stderr, "Failed to create ring buffer\n");
+        goto cleanup;
+    }
+
+    printf("%-8s %-8s %-16s %s\n", "PID", "UID", "COMM", "FILENAME");
+    while (!exiting) {
+        // ring_buffer__poll returns # of events consumed, or negative if error
+        err = ring_buffer__poll(rb, 100);
+        if (err == -EINTR) {
+            err = 0;
+            break;
+        }
+
+        if (err < 0) {
+            fprintf(stderr, "Error polling ring buffer: %d\n", err);
+            break;
+        }
+    }
+
+cleanup:
+    // same as normal destructors! (clean up in reverse order of init)
+    ring_buffer__free(rb); 
+    program_bpf__destroy(skel); // detaches programs + closes maps
+
+    return err < 0 ? 1 : 0;
 }
